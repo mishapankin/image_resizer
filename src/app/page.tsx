@@ -1,103 +1,185 @@
-import Image from "next/image";
+"use client";
+
+import { useState } from "react";
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [image, setImage] = useState<File | null>(null);
+  const [dpi, setDpi] = useState(300);
+  const [scaleFactor, setScaleFactor] = useState(1); // New state for scaling coefficient
+  const [resizedImage, setResizedImage] = useState<string | null>(null);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] || null;
+    setImage(file);
+  };
+
+  const handleResize = () => {
+    if (!image) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.src = e.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        canvas.width = img.width * scaleFactor; // Use scaleFactor from input
+        canvas.height = img.height * scaleFactor;
+
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        canvas.toBlob(
+          async (blob) => {
+            if (!blob) return;
+
+            const arrayBuffer = await blob.arrayBuffer();
+            const uint8Array = new Uint8Array(arrayBuffer);
+
+            // Helper function to create a PNG chunk
+            const createChunk = (
+              type: string | undefined,
+              data: ArrayLike<number>
+            ) => {
+              const crc32 = (
+                data: string | any[] | Uint8Array<ArrayBuffer>
+              ) => {
+                let crc = 0xffffffff;
+                for (let i = 0; i < data.length; i++) {
+                  crc ^= data[i];
+                  for (let j = 0; j < 8; j++) {
+                    crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+                  }
+                }
+                return (crc ^ 0xffffffff) >>> 0;
+              };
+
+              const typeBytes = new TextEncoder().encode(type);
+              const chunk = new Uint8Array(12 + data.length); // 4 bytes length + 4 bytes type + data + 4 bytes CRC
+              const length = data.length;
+
+              // Set length
+              chunk[0] = (length >> 24) & 0xff;
+              chunk[1] = (length >> 16) & 0xff;
+              chunk[2] = (length >> 8) & 0xff;
+              chunk[3] = length & 0xff;
+
+              // Set type
+              chunk.set(typeBytes, 4);
+
+              // Set data
+              chunk.set(data, 8);
+
+              // Calculate and set CRC
+              const crc = crc32(chunk.subarray(4, 8 + data.length));
+              chunk[8 + data.length] = (crc >> 24) & 0xff;
+              chunk[9 + data.length] = (crc >> 16) & 0xff;
+              chunk[10 + data.length] = (crc >> 8) & 0xff;
+              chunk[11 + data.length] = crc & 0xff;
+
+              return chunk;
+            };
+
+            // Create pHYs chunk for DPI
+            const pixelsPerMeter = Math.round((dpi / 2.54) * 100);
+            const pHYsData = new Uint8Array([
+              (pixelsPerMeter >> 24) & 0xff,
+              (pixelsPerMeter >> 16) & 0xff,
+              (pixelsPerMeter >> 8) & 0xff,
+              pixelsPerMeter & 0xff,
+              (pixelsPerMeter >> 24) & 0xff,
+              (pixelsPerMeter >> 16) & 0xff,
+              (pixelsPerMeter >> 8) & 0xff,
+              pixelsPerMeter & 0xff,
+              1, // Unit specifier (1 = meters)
+            ]);
+            const pHYsChunk = createChunk("pHYs", pHYsData);
+
+            // Insert pHYs chunk after IHDR chunk
+            const ihdrEndIndex = uint8Array.findIndex(
+              (_, i) =>
+                uint8Array[i] === 0x49 &&
+                uint8Array[i + 1] === 0x48 &&
+                uint8Array[i + 2] === 0x44 &&
+                uint8Array[i + 3] === 0x52
+            );
+            const ihdrChunkLength =
+              (uint8Array[ihdrEndIndex - 4] << 24) |
+              (uint8Array[ihdrEndIndex - 3] << 16) |
+              (uint8Array[ihdrEndIndex - 2] << 8) |
+              uint8Array[ihdrEndIndex - 1];
+            const ihdrChunkEnd = ihdrEndIndex + 4 + ihdrChunkLength + 4;
+
+            const updatedArray = new Uint8Array(
+              uint8Array.length + pHYsChunk.length
+            );
+            updatedArray.set(uint8Array.subarray(0, ihdrChunkEnd), 0);
+            updatedArray.set(pHYsChunk, ihdrChunkEnd);
+            updatedArray.set(
+              uint8Array.subarray(ihdrChunkEnd),
+              ihdrChunkEnd + pHYsChunk.length
+            );
+
+            const updatedBlob = new Blob([updatedArray], { type: "image/png" });
+            const updatedURL = URL.createObjectURL(updatedBlob);
+            setResizedImage(updatedURL);
+          },
+          "image/png",
+          1.0
+        );
+      };
+    };
+    reader.readAsDataURL(image);
+  };
+
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen p-4">
+      <h1 className="text-2xl font-bold mb-4">Image Resizer</h1>
+      <input
+        type="file"
+        accept="image/*"
+        onChange={handleImageUpload}
+        className="mb-4"
+      />
+      <div className="mb-4">
+        <label className="mr-2">DPI:</label>
+        <input
+          type="number"
+          value={dpi}
+          onChange={(e) => setDpi(Number(e.target.value))}
+          className="border rounded p-1"
+        />
+      </div>
+      <div className="mb-4">
+        <label className="mr-2">Scale Factor:</label>
+        <input
+          type="number"
+          step="0.1"
+          value={scaleFactor}
+          onChange={(e) => setScaleFactor(Number(e.target.value))}
+          className="border rounded p-1"
+        />
+      </div>
+      <button
+        onClick={handleResize}
+        className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+      >
+        Resize Image
+      </button>
+      {resizedImage && (
+        <div className="mt-4">
+          <h2 className="text-lg font-semibold mb-2">Resized Image:</h2>
+          <img src={resizedImage} alt="Resized" className="border" />
           <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+            href={resizedImage}
+            download="resized-image.png"
+            className="block mt-2 text-blue-500 underline"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
+            Download Image
           </a>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      )}
     </div>
   );
 }
