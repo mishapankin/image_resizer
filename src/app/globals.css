@@ -5,7 +5,7 @@
   --foreground: #171717;
 }
 
-@theme inline {
+:root {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
@@ -35,6 +35,8 @@ button {
   font-size: 16px;
   font-weight: bold;
   transition: background-color 0.3s ease, transform 0.2s ease;
+  width: 100%;
+  text-align: center;
 }
 
 button:hover {
@@ -50,10 +52,24 @@ button:active {
 input[type="file"],
 input[type="number"] {
   border: 1px solid #ccc;
-  padding: 8px;
+  padding: 10px;
   border-radius: 5px;
   font-size: 14px;
+  width: 100%;
   transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+input[type="number"] {
+  /* Remove default spinner arrows */
+  -moz-appearance: textfield;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 input[type="file"]:focus,
@@ -73,6 +89,8 @@ a.download-button {
   font-size: 16px;
   font-weight: bold;
   transition: background-color 0.3s ease, transform 0.2s ease;
+  width: 100%;
+  text-align: center;
 }
 
 a.download-button:hover {
